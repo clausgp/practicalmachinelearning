@@ -1,20 +1,98 @@
 ---
-title: "Practical Machine Learning Project"
+title: "Classification of weight lifting  exercise"
 author: "Claus Gaarde Pedersen"
 date: "9. maj 2016"
 output: html_document
 ---
+## Synopsis
 
-Initial test document
+In this project it will be shown how sensors attached to the body can recognize how well you are doing a single weight lifting exercise. The accuracy of the chosen random forest model is very high.
+
+## Introduction
+
+"Groupware@LES"" has provided the data for the project. Visit their website here for further information http://groupware.les.inf.puc-rio.br/har
+
+From the instructions on the site we can see that the classe variable is telling how the participants was doing the exercise(dumbbell biceps curl). Its a cathegorical variable with 5 levels. A if the exercise was done perfect, and the other 4 scores, if they did the exercise in a sligthy different way. Each of the other 4 scores depends on how they moved.
+
+This makes it clear that its a classification problem where we predict the output classe according to the sensor data. The other data in the dataset outside of sensor, is not important for prediction. When we use sensor data as the predictors, whose values, already isnt that interpretable, we will focus on getting an accurate model, instead of a more interpretable model. Meaning we will skip directly to a more advanced model.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(caret)
+library(randomForest)
+```
+ 
+## Exploratory
+
+Initial reading of the csv files, show that the sensor data uses #DIV/0! as NA value
 
 ```{r}
-summary(cars)
+train.file <- read.csv("pml-training.csv", na.string=c("NA", "#DIV/0!"))
+test.file <- read.csv("pml-testing.csv", na.string=c("NA", "#DIV/0!"))
+dim(train.file)
+table(train.file$classe)
+
+# sensor data is from column 8 to 159, and classe is the 160 column
+train.data <- train.file[,8:160]
+# test has same columns as train except the last column classe
+test.data <- test.file[,8:159]
+
+# examination for NA values
+na.count <-sapply(train.data, function(y) sum(length(which(is.na(y)))))
+na.count[na.count>0 & na.count < 19000]
 ```
 
-You can also embed plots, for example:
+This shows that either has each column no NAs or nearly all NAs. This is good news as we can easily remove the columns with NAs, and there will be no need to do imputing. Without imputing and data for every column for every observation should also make the model much better at predicting.
 
-```{r, echo=FALSE}
-plot(cars)
+```{r}
+# removing NA columns
+train.data <- train.data[,na.count==0]
+test.data <- test.data[,na.count[1:length(na.count)-1]==0]
+# predictor columns
+pred.columns <- ncol(test.data)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Cross validation
+
+The data is already split into a train and test part. To estimate the model, the training set will further be split into a training part and validation part. Also the method for modelling we are using will be doing its own cross validation, further splitting the train part of the training set into training and validation. Thats why we will leave a bigger part than normal to the training set, so the split will be 80% for training and 20% for model-validation.
+
+```{r}
+set.seed(1234)
+train.index <- createDataPartition(y=train.data$classe, p=0.8, list=FALSE)
+training <- train.data
+training <- train.data[train.index,]
+validation <- train.data[-train.index,]
+```
+
+## Random forest
+
+Random forest is an extended decision tree modelling method, that tries to reduce the variance that normally comes from a decision tree model
+Random forest cross validation is using bootstrap aggregation (bagging), so it grows a number of trees each done on a random sample with replacement from its training set. This is to decrease the variance, without increasing the bias towards the training set. The speciality of random forest is that at each node split the predictor variables are also randomly subsetted.
+In fact in this project we will start by finding out what the optimum amount of randomly subsetted variables should be, which can be done with tuneRF from the randomForest package, which also starts the algorithm and returns with the model. This number can be found in the models mtry variable. We will let the tuning be done with the default number of tree, which is 500, so it will take some time ...
+
+```{r}
+rf.fit <- tuneRF(training[,1:(ncol(training)-1)], training$classe, doBest=TRUE, nodesize=1, importance=TRUE, ntreeTry=500)
+```
+
+The number of random features (variables) chosen is `r rf.fit$mtry`. The suggested number from the authors is $\sqrt{p}$. Where p is the number of features. For our cleaned training with `r pred.columns` features left, that number is `r sqrt(pred.columns)`
+
+```{r}
+rf.pred <- predict(rf.fit, validation)
+rf.fit.conf <- confusionMatrix(rf.pred, validation$classe)
+rf.fit.conf
+```
+
+## Model results and out of sample error
+
+The matrix shows that the model can predict nearly every validation observation perfectly which can be seen in the accuracy score of `r rf.fit.conf$overall[1]`. Which gives an out of sample error for the validation set of `r 1-rf.fit.conf$overall[1]`. Proving that this model is a very good fit for the data, and also giving no reason to look for a model with a better fit.
+
+```{r}
+varImpPlot(rf.fit, main="Importance of variables", type=1)
+```
+
+For those interested this figure, show the weight of each variable in predicting the classe. The higher the more significant. The graph can be interpreted as the error-effect on accuracy if the variable was left out in the prediction model. 
+
+## Testing results
+```{r}
+predict(rf.fit, test.data)
+```
+
